@@ -24,7 +24,8 @@ namespace ImapFolderSubscriptionGuard {
 
         private readonly string mailboxDirectory;
         private readonly StringCollection foldersToUnsubscribeFrom;
-        private readonly FileSystemWatcher fileSystemWatcher;
+        private readonly FileSystemWatcher subscriptionConfigurationFileWatcher;
+        private readonly FileSystemWatcher folderWatcher;
 
         private readonly FileIniDataParser initializationDataMapper = new FileIniDataParser(new IniDataParser(
             new IniParserConfiguration {
@@ -53,8 +54,12 @@ namespace ImapFolderSubscriptionGuard {
                 Environment.Exit(1);
             }
 
-            fileSystemWatcher = new FileSystemWatcher(mailboxDirectory, SUBSCRIPTION_CONFIGURATION_FILENAME) {
+            subscriptionConfigurationFileWatcher = new FileSystemWatcher(mailboxDirectory, SUBSCRIPTION_CONFIGURATION_FILENAME) {
                 NotifyFilter = NotifyFilters.LastWrite
+            };
+
+            folderWatcher = new FileSystemWatcher(mailboxDirectory, "*.IMAP") {
+                NotifyFilter = NotifyFilters.DirectoryName
             };
         }
 
@@ -62,25 +67,28 @@ namespace ImapFolderSubscriptionGuard {
             fixSubscriptions();
 
             DebouncedAction onSubscriptionFileChanged = Debouncer.Debounce(() => {
-                Console.WriteLine($"\nChange detected in {subscriptionConfigurationPath}");
-                fileSystemWatcher.EnableRaisingEvents = false;
+                Console.WriteLine("\nChange detected, fixing subscriptions...");
                 fixSubscriptions();
-                fileSystemWatcher.EnableRaisingEvents = true;
             }, TimeSpan.FromMilliseconds(50));
 
-            fileSystemWatcher.Changed += delegate { onSubscriptionFileChanged.Run(); };
+            subscriptionConfigurationFileWatcher.Changed += delegate { onSubscriptionFileChanged.Run(); };
+            folderWatcher.Created += delegate { onSubscriptionFileChanged.Run(); };
+            folderWatcher.Renamed += delegate { onSubscriptionFileChanged.Run(); };
 
-            fileSystemWatcher.EnableRaisingEvents = true;
+            subscriptionConfigurationFileWatcher.EnableRaisingEvents = true;
+            folderWatcher.EnableRaisingEvents = true;
 
-            Console.WriteLine($"Waiting for subscription changes in {subscriptionConfigurationPath}");
+            Console.WriteLine("Waiting for subscription changes...");
         }
 
         internal void stopGuarding() {
-            fileSystemWatcher.EnableRaisingEvents = false;
+            subscriptionConfigurationFileWatcher.EnableRaisingEvents = false;
+            folderWatcher.EnableRaisingEvents = false;
         }
 
         public void Dispose() {
-            fileSystemWatcher?.Dispose();
+            subscriptionConfigurationFileWatcher?.Dispose();
+            folderWatcher?.Dispose();
         }
 
         private void fixSubscriptions() {
